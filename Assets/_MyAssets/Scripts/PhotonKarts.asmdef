@@ -2,7 +2,8 @@
     "name": "PhotonKarts",
     "references": [
         "GUID:a54b96d5ddd2c488aadb7e2cb0921b9b",
-        "GUID:1baf1ffff1031e948b3b228ab3453251"
+        "GUID:1baf1ffff1031e948b3b228ab3453251",
+        "GUID:75469ad4d38634e559750d17036d5f7c"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
