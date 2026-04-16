@@ -12,7 +12,15 @@
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
-    "defineConstraints": [],
-    "versionDefines": [],
+    "defineConstraints": [
+        "IET_FRAMEWORK_PRESENT"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.learn.iet-framework",
+            "expression": "",
+            "define": "IET_FRAMEWORK_PRESENT"
+        }
+    ],
     "noEngineReferences": false
 }
