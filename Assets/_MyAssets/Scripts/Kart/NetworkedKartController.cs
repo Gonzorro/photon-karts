@@ -1,4 +1,5 @@
 using Fusion;
+using Fusion.Addons.Physics;
 using KartGame.KartSystems;
 using PhotonKarts.Networking;
 using UnityEngine;
@@ -15,13 +16,16 @@ namespace PhotonKarts.Kart
     ///     they don't fight NetworkRigidbody3D interpolation.
     ///   - Exposes Freeze/Unfreeze for host-migration overlay.
     ///
-    /// Position/rotation sync and interpolation is handled by NetworkTransform (same GameObject).
+    /// Position/rotation sync and prediction reconciliation is handled by NetworkRigidbody3D (same GameObject).
     /// </summary>
     [RequireComponent(typeof(ArcadeKart))]
-    [RequireComponent(typeof(NetworkTransform))]
+    [RequireComponent(typeof(NetworkRigidbody3D))]
     [RequireComponent(typeof(FusionInputProxy))]
     public class NetworkedKartController : NetworkBehaviour
     {
+        /// <summary>Set when the local input-authority kart spawns. Cleared on despawn.</summary>
+        public static NetworkedKartController LocalKart { get; private set; }
+
         private ArcadeKart _kart;
         private FusionInputProxy _proxy;
 
@@ -32,15 +36,37 @@ namespace PhotonKarts.Kart
             _kart  = GetComponent<ArcadeKart>();
             _proxy = GetComponent<FusionInputProxy>();
 
-            // Proxies are purely visual — NetworkTransform interpolates their transform.
-            // Disabling ArcadeKart stops its FixedUpdate from fighting the interpolated state.
             if (!HasStateAuthority && !HasInputAuthority)
+            {
                 _kart.enabled = false;
+            }
+            else if (HasInputAuthority)
+            {
+                // Client prediction — opt into local physics simulation.
+                Runner.SetIsSimulated(Object, true);
+                var rb = GetComponent<Rigidbody>();
+                if (rb != null) rb.isKinematic = false;
+            }
+
+            // Set camera for whoever owns this kart locally — works on both host and client.
+            if (Object.InputAuthority == Runner.LocalPlayer)
+            {
+                LocalKart = this;
+                var cam = FindFirstObjectByType<KartCamera>();
+                if (cam != null) cam.SetTarget(transform);
+                else Debug.LogWarning("[NKC] KartCamera not found in scene!");
+            }
+        }
+
+        public override void Despawned(NetworkRunner runner, bool hasState)
+        {
+            if (LocalKart == this) LocalKart = null;
         }
 
         public override void FixedUpdateNetwork()
         {
-            // Proxies skip simulation entirely.
+            // Runs on both host (authoritative) and input-authority client (predicted).
+            // Proxies skip — they have no input and no physics to run.
             if (!HasStateAuthority && !HasInputAuthority) return;
 
             if (GetInput(out NetworkInputData input))

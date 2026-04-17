@@ -15,12 +15,12 @@ namespace PhotonKarts.Networking
     /// Owns the NetworkRunner lifecycle for the entire session.
     ///
     /// Server build  (#if UNITY_SERVER): starts as GameMode.Server — headless, no camera/audio/UI.
-    /// Client build  (else):             starts as GameMode.Client, auto-joins "DefaultRace".
-    ///                                   Retries until the server room exists.
+    /// Client build  (else):             starts as GameMode.AutoHostOrClient — first instance hosts,
+    ///                                   rest join as clients.
     ///
     /// Also handles:
     ///   - Forwarding local player input to Fusion each tick (OnInput)
-    ///   - Delegating player join/leave to KartSpawnManager
+    ///   - Delegating player join/leave to KartSpawnManager (server only)
     ///   - Host migration when the dedicated server goes down
     /// </summary>
     public class FusionConnectionManager : MonoBehaviour, INetworkRunnerCallbacks
@@ -44,9 +44,7 @@ namespace PhotonKarts.Networking
         private NetworkRunner _runner;
 
         /// <summary>True when running as the authoritative server (dedicated or migrated host).</summary>
-        public bool IsServer => _runner != null &&
-                                (_runner.GameMode == FusionGameMode.Server ||
-                                 _runner.GameMode == FusionGameMode.Host);
+        public bool IsServer => _runner != null && _runner.IsServer;
 
         // ── Unity lifecycle ──────────────────────────────────────────────────────
 
@@ -55,7 +53,7 @@ namespace PhotonKarts.Networking
 #if UNITY_SERVER
             StartServer();
 #else
-            StartCoroutine(ConnectAsClientWithRetry());
+            ConnectAsAutoHostOrClient();
 #endif
         }
 
@@ -73,6 +71,22 @@ namespace PhotonKarts.Networking
                 Debug.Log("[Server] Session 'DefaultRace' open. Waiting for players.");
             else
                 Debug.LogError($"[Server] StartGame failed: {result.ShutdownReason}");
+        }
+
+        // ── Editor / standalone: AutoHostOrClient ────────────────────────────────
+
+        private async void ConnectAsAutoHostOrClient()
+        {
+            _runner = Instantiate(_runnerPrefab);
+            _runner.AddCallbacks(this);
+
+            var args   = BuildStartArgs(FusionGameMode.AutoHostOrClient);
+            var result = await _runner.StartGame(args);
+
+            if (result.Ok)
+                Debug.Log("[Client] Started as AutoHostOrClient.");
+            else
+                Debug.LogError($"[Client] StartGame failed: {result.ShutdownReason}");
         }
 
         // ── Client start with retry ───────────────────────────────────────────────

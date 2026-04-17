@@ -1,4 +1,4 @@
-using System.Linq;
+using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
 
@@ -8,33 +8,19 @@ namespace PhotonKarts.Networking
     /// Server-authoritative kart spawner. Called by FusionConnectionManager when
     /// players join or leave the session.
     ///
-    /// Karts are indexed by spawn slot (0-2) rather than PlayerRef because PlayerRef
-    /// IDs can change after host migration. SlottedKarts survives migration via the
-    /// HostMigrationToken snapshot since it is a [Networked] NetworkArray.
+    /// Uses runner.SetPlayerObject / GetPlayerObject for the player→kart mapping so
+    /// the association survives host migration without requiring a NetworkBehaviour.
     /// </summary>
-    public class KartSpawnManager : NetworkBehaviour
+    public class KartSpawnManager : MonoBehaviour
     {
-        // ── Inspector ─────────────────────────────────────────────────────────────
         [Tooltip("Networked kart prefab to spawn for each player.")]
         [SerializeField] private NetworkObject _kartPrefab;
 
         [Tooltip("Spawn point transforms — one per slot (max 3).")]
         [SerializeField] private Transform[] _spawnPoints;
 
-        // ── Networked state ───────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Slot-indexed kart references. Index 0-2 matches _spawnPoints.
-        /// Stored as a NetworkArray so the mapping survives host migration.
-        /// </summary>
-        [Networked, Capacity(3)]
-        private NetworkArray<NetworkObject> SlottedKarts => default;
-
-        // ── Runtime ───────────────────────────────────────────────────────────────
-
-        // Maps PlayerRef → slot index for quick lookup (local, not networked).
-        private readonly System.Collections.Generic.Dictionary<PlayerRef, int> _playerSlots
-            = new System.Collections.Generic.Dictionary<PlayerRef, int>();
+        // Local slot tracker — rebuilt after host migration.
+        private readonly Dictionary<PlayerRef, int> _playerSlots = new();
 
         // ── Public API (called by FusionConnectionManager) ────────────────────────
 
@@ -56,63 +42,60 @@ namespace PhotonKarts.Networking
                 inputAuthority: player
             );
 
-            SlottedKarts.Set(slot, kart);
+            runner.SetPlayerObject(player, kart);
             _playerSlots[player] = slot;
 
-            Debug.Log($"[Server] Player {player} spawned at slot {slot}. " +
-                      $"Players in session: {runner.ActivePlayers.Count()}");
+            Debug.Log($"[Server] Player {player} spawned at slot {slot}.");
         }
 
         /// <summary>Despawns the kart of a player that left. Server only.</summary>
         public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
         {
-            if (!_playerSlots.TryGetValue(player, out int slot)) return;
-
-            var kart = SlottedKarts.Get(slot);
-            if (kart != null)
+            if (runner.TryGetPlayerObject(player, out var kart))
                 runner.Despawn(kart);
 
-            SlottedKarts.Set(slot, null);
             _playerSlots.Remove(player);
-
-            Debug.Log($"[Server] Player {player} kart despawned from slot {slot}.");
+            Debug.Log($"[Server] Player {player} kart despawned.");
         }
 
         /// <summary>
-        /// Called by FusionConnectionManager after host migration completes.
-        /// Re-maps PlayerRef → slot from the token-restored SlottedKarts array.
+        /// Rebuilds the local slot map after host migration.
+        /// Karts are already restored by Fusion — just re-associate slots.
         /// </summary>
         public void OnHostMigrationResume(NetworkRunner runner)
         {
             _playerSlots.Clear();
-
-            for (int slot = 0; slot < SlottedKarts.Length; slot++)
+            int slot = 0;
+            foreach (var player in runner.ActivePlayers)
             {
-                var kart = SlottedKarts.Get(slot);
-                if (kart == null) continue;
-
-                _playerSlots[kart.InputAuthority] = slot;
-                Debug.Log($"[Host] Migration resume: player {kart.InputAuthority} → slot {slot}");
+                _playerSlots[player] = slot++;
+                Debug.Log($"[Host] Migration resume: player {player} → slot {slot - 1}");
             }
         }
 
         /// <summary>Returns the kart NetworkObject for a given player, or null.</summary>
-        public NetworkObject GetKartForPlayer(PlayerRef player)
+        public NetworkObject GetKartForPlayer(NetworkRunner runner, PlayerRef player)
         {
-            if (!_playerSlots.TryGetValue(player, out int slot)) return null;
-            return SlottedKarts.Get(slot);
+            runner.TryGetPlayerObject(player, out var kart);
+            return kart;
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────────
 
         private int FindFreeSlot()
         {
-            for (int i = 0; i < _spawnPoints.Length && i < SlottedKarts.Length; i++)
+            for (int i = 0; i < _spawnPoints.Length; i++)
             {
-                if (SlottedKarts.Get(i) == null)
-                    return i;
+                if (!IsSlotOccupied(i)) return i;
             }
             return -1;
+        }
+
+        private bool IsSlotOccupied(int slot)
+        {
+            foreach (var s in _playerSlots.Values)
+                if (s == slot) return true;
+            return false;
         }
     }
 }

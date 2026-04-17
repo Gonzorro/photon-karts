@@ -31,8 +31,8 @@ namespace PhotonKarts.Kart
         {
             _current = new InputData
             {
-                Accelerate = networkInput.Accelerate,
-                Brake      = networkInput.Brake,
+                Accelerate = networkInput.Buttons.IsSet(KartButton.Accelerate),
+                Brake      = networkInput.Buttons.IsSet(KartButton.Brake),
                 TurnInput  = networkInput.SteerInput,
             };
         }

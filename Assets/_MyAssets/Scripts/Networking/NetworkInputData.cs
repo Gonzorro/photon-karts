@@ -22,8 +22,5 @@ namespace PhotonKarts.Networking
 
         /// <summary>Analog steering value in the range [-1, 1].</summary>
         public float SteerInput;
-
-        public readonly bool Accelerate => Buttons.IsSet(KartButton.Accelerate);
-        public readonly bool Brake      => Buttons.IsSet(KartButton.Brake);
     }
 }
