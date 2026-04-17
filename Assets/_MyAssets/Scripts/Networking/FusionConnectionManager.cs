@@ -34,6 +34,9 @@ namespace PhotonKarts.Networking
         [Tooltip("Reads keyboard/gamepad and feeds Fusion each tick. Leave null on server.")]
         [SerializeField] private FusionInputProvider _inputProvider;
 
+        [Header("Debug HUD")]
+        [SerializeField] private ConnectionStateSO _connectionState;
+
         // ── Constants ────────────────────────────────────────────────────────────
         private const string SessionName    = "DefaultRace";
         private const int    MaxPlayers     = 3;
@@ -50,6 +53,9 @@ namespace PhotonKarts.Networking
 
         private void Start()
         {
+            _connectionState?.Reset();
+            SetStatus(ConnectionStatus.Connecting);
+
 #if UNITY_SERVER
             StartServer();
 #else
@@ -193,6 +199,9 @@ namespace PhotonKarts.Networking
         public void OnPlayerJoined(NetworkRunner runner, PlayerRef player)
         {
             Debug.Log($"[{ModeLabel()}] Player {player} joined. In session: {runner.ActivePlayers.Count()}");
+            UpdateConnectionState(runner);
+            if (_connectionState != null)
+                _connectionState.PlayerCount = runner.ActivePlayers.Count();
 
             if (runner.IsServer)
             {
@@ -204,6 +213,8 @@ namespace PhotonKarts.Networking
         public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
         {
             Debug.Log($"[{ModeLabel()}] Player {player} left.");
+            if (_connectionState != null)
+                _connectionState.PlayerCount = runner.ActivePlayers.Count();
 
             if (runner.IsServer)
             {
@@ -227,16 +238,19 @@ namespace PhotonKarts.Networking
         public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
         {
             Debug.Log($"[{ModeLabel()}] Runner shutdown: {shutdownReason}");
+            SetStatus(ConnectionStatus.Disconnected);
         }
 
         public void OnConnectedToServer(NetworkRunner runner)
         {
             Debug.Log($"[Client] Connected to server.");
+            UpdateConnectionState(runner);
         }
 
         public void OnDisconnectedFromServer(NetworkRunner runner, NetDisconnectReason reason)
         {
             Debug.LogWarning($"[Client] Disconnected from server: {reason}");
+            SetStatus(ConnectionStatus.Disconnected);
         }
 
         // ── Required interface stubs ──────────────────────────────────────────────
@@ -271,5 +285,21 @@ namespace PhotonKarts.Networking
         }
 
         private string ModeLabel() => IsServer ? "Server" : "Client";
+
+        private void SetStatus(ConnectionStatus status)
+        {
+            if (_connectionState == null) return;
+            _connectionState.Status = status;
+        }
+
+        private void UpdateConnectionState(NetworkRunner runner)
+        {
+            if (_connectionState == null) return;
+            _connectionState.Status      = ConnectionStatus.Connected;
+            _connectionState.RoomName    = runner.SessionInfo.Name ?? SessionName;
+            _connectionState.IsHost      = runner.IsServer;
+            _connectionState.MaxPlayers  = MaxPlayers;
+            _connectionState.LocalPlayer = runner.LocalPlayer.ToString();
+        }
     }
 }
