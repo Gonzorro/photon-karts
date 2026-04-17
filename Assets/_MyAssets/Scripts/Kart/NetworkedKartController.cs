@@ -63,6 +63,15 @@ namespace PhotonKarts.Kart
             if (LocalKart == this) LocalKart = null;
         }
 
+        private void LateUpdate()
+        {
+            if (_kart == null || !_kart.enabled) return;
+
+            var gfm    = NetworkGameFlowManager.Instance;
+            bool canMove = gfm == null || gfm.Phase == RacePhase.Racing || gfm.Phase == RacePhase.Finished;
+            _kart.SetCanMove(canMove);
+        }
+
         public override void FixedUpdateNetwork()
         {
             // Runs on both host (authoritative) and input-authority client (predicted).

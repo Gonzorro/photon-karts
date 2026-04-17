@@ -28,7 +28,50 @@ namespace PhotonKarts.UI
             sb.AppendLine($"Players: {_state.PlayerCount} / {_state.MaxPlayers}");
             sb.AppendLine($"Local:   {(_state.LocalPlayer.Length > 0 ? _state.LocalPlayer : "—")}");
 
+            if (_state.Log.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("── Connection Log ──");
+                foreach (var line in _state.Log)
+                    sb.AppendLine(line);
+            }
+
+            AppendRaceFlow(sb);
+
             return sb.ToString();
+        }
+
+        private void AppendRaceFlow(System.Text.StringBuilder sb)
+        {
+            var gfm = NetworkGameFlowManager.Instance;
+            if (gfm == null) return;
+
+            sb.AppendLine();
+
+            switch (gfm.Phase)
+            {
+                case RacePhase.WaitingForReady:
+                    sb.AppendLine("── Ready Up (SPACE) ──");
+                    for (int i = 0; i < _state.PlayerCount; i++)
+                    {
+                        // PlayerRef.PlayerId is 1-indexed
+                        bool ready = (gfm.ReadyBitmask & (1 << i)) != 0;
+                        sb.AppendLine($"  Player {i + 1}: {(ready ? "✓ READY" : "waiting...")}");
+                    }
+                    break;
+
+                case RacePhase.Countdown:
+                    sb.AppendLine($"  Starting in {gfm.CountdownRemaining:F1}s");
+                    break;
+
+                case RacePhase.Racing:
+                    sb.AppendLine("  RACING");
+                    break;
+
+                case RacePhase.Finished:
+                    sb.AppendLine("  FINISHED");
+                    break;
+            }
         }
     }
 }

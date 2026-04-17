@@ -23,7 +23,10 @@ namespace PhotonKarts.Editor
             var canvas   = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 100;
-            canvasGO.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            var scaler = canvasGO.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode         = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            scaler.matchWidthOrHeight  = 0.5f;
             canvasGO.AddComponent<GraphicRaycaster>();
 
             // Panel (top-left anchor)
@@ -34,7 +37,7 @@ namespace PhotonKarts.Editor
             panelRect.anchorMax = new Vector2(0, 1);
             panelRect.pivot     = new Vector2(0, 1);
             panelRect.anchoredPosition = new Vector2(10, -10);
-            panelRect.sizeDelta        = new Vector2(280, 140);
+            panelRect.sizeDelta        = new Vector2(320, 320);
 
             var bg = panelGO.AddComponent<Image>();
             bg.color = new Color(0, 0, 0, 0.55f);
@@ -52,6 +55,8 @@ namespace PhotonKarts.Editor
             tmp.fontSize         = 14;
             tmp.color            = Color.white;
             tmp.alignment        = TextAlignmentOptions.TopLeft;
+            tmp.overflowMode     = TextOverflowModes.Overflow;
+            tmp.enableWordWrapping = false;
             tmp.text             = "Connecting...";
 
             // HUD component

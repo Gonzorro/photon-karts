@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace PhotonKarts.Networking
@@ -24,6 +25,16 @@ namespace PhotonKarts.Networking
         public int              MaxPlayers;
         public string           LocalPlayer;
 
+        /// <summary>Live connection log — newest entry first.</summary>
+        public readonly List<string> Log = new List<string>();
+        private const int MaxLogLines = 8;
+
+        public void PushLog(string message)
+        {
+            Log.Insert(0, $"[{System.DateTime.Now:HH:mm:ss}] {message}");
+            if (Log.Count > MaxLogLines) Log.RemoveAt(Log.Count - 1);
+        }
+
         public void Reset()
         {
             Status      = ConnectionStatus.Disconnected;
@@ -32,6 +43,7 @@ namespace PhotonKarts.Networking
             PlayerCount = 0;
             MaxPlayers  = 0;
             LocalPlayer = string.Empty;
+            Log.Clear();
         }
     }
 }

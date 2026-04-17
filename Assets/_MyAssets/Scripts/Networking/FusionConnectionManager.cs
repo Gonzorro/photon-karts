@@ -57,8 +57,10 @@ namespace PhotonKarts.Networking
             SetStatus(ConnectionStatus.Connecting);
 
 #if UNITY_SERVER
+            _connectionState?.PushLog("Starting dedicated server...");
             StartServer();
 #else
+            _connectionState?.PushLog("Starting — looking for session...");
             ConnectAsAutoHostOrClient();
 #endif
         }
@@ -70,13 +72,21 @@ namespace PhotonKarts.Networking
             _runner = Instantiate(_runnerPrefab);
             _runner.AddCallbacks(this);
 
+            _connectionState?.PushLog("Runner created — StartGame (Server)...");
             var args = BuildStartArgs(FusionGameMode.Server);
             var result = await _runner.StartGame(args);
 
             if (result.Ok)
+            {
+                _connectionState?.PushLog("Session open. Waiting for players.");
                 Debug.Log("[Server] Session 'DefaultRace' open. Waiting for players.");
+            }
             else
+            {
+                _connectionState?.PushLog($"StartGame failed: {result.ShutdownReason}");
+                SetStatus(ConnectionStatus.Failed);
                 Debug.LogError($"[Server] StartGame failed: {result.ShutdownReason}");
+            }
         }
 
         // ── Editor / standalone: AutoHostOrClient ────────────────────────────────
@@ -86,13 +96,22 @@ namespace PhotonKarts.Networking
             _runner = Instantiate(_runnerPrefab);
             _runner.AddCallbacks(this);
 
+            _connectionState?.PushLog($"Runner created — joining '{SessionName}'...");
             var args   = BuildStartArgs(FusionGameMode.AutoHostOrClient);
             var result = await _runner.StartGame(args);
 
             if (result.Ok)
+            {
+                bool isHost = _runner.IsServer;
+                _connectionState?.PushLog(isHost ? "Started as HOST." : "Joined as CLIENT.");
                 Debug.Log("[Client] Started as AutoHostOrClient.");
+            }
             else
+            {
+                _connectionState?.PushLog($"StartGame failed: {result.ShutdownReason}");
+                SetStatus(ConnectionStatus.Failed);
                 Debug.LogError($"[Client] StartGame failed: {result.ShutdownReason}");
+            }
         }
 
         // ── Client start with retry ───────────────────────────────────────────────
@@ -150,18 +169,21 @@ namespace PhotonKarts.Networking
         public void OnHostMigration(NetworkRunner runner, HostMigrationToken hostMigrationToken)
         {
             Debug.Log("[Client] OnHostMigration received — restarting as Host.");
+            _connectionState?.PushLog("Host left — migrating to host...");
             StartCoroutine(MigrateToHost(hostMigrationToken));
         }
 
         private IEnumerator MigrateToHost(HostMigrationToken token)
         {
-            _runner.Shutdown();
-            yield return new WaitUntil(() => !_runner.IsRunning);
-
-            Destroy(_runner.gameObject);
+            var oldRunner = _runner;
             _runner = null;
 
-            // Spawn a fresh runner and start as the new host
+            oldRunner.Shutdown();
+            yield return new WaitUntil(() => !oldRunner.IsRunning);
+            Destroy(oldRunner.gameObject);
+
+            _connectionState?.PushLog("Old runner destroyed — spawning new runner...");
+
             _runner = Instantiate(_runnerPrefab);
             _runner.AddCallbacks(this);
 
@@ -170,6 +192,7 @@ namespace PhotonKarts.Networking
 
         private async void StartAsHost(HostMigrationToken token)
         {
+            _connectionState?.PushLog("Restarting as new host...");
             var args = BuildStartArgs(FusionGameMode.Host);
             args.HostMigrationToken  = token;
             args.HostMigrationResume = OnHostMigrationResume;
@@ -177,9 +200,15 @@ namespace PhotonKarts.Networking
             var result = await _runner.StartGame(args);
 
             if (result.Ok)
+            {
+                _connectionState?.PushLog("Now HOST — session restored.");
                 Debug.Log("[Client] Now running as Host. Session restored.");
+            }
             else
+            {
+                _connectionState?.PushLog($"Migration failed: {result.ShutdownReason}");
                 Debug.LogError($"[Client] Host migration StartGame failed: {result.ShutdownReason}");
+            }
         }
 
         /// <summary>
@@ -198,10 +227,12 @@ namespace PhotonKarts.Networking
 
         public void OnPlayerJoined(NetworkRunner runner, PlayerRef player)
         {
-            Debug.Log($"[{ModeLabel()}] Player {player} joined. In session: {runner.ActivePlayers.Count()}");
+            int count = runner.ActivePlayers.Count();
+            Debug.Log($"[{ModeLabel()}] Player {player} joined. In session: {count}");
+            _connectionState?.PushLog($"Player {player} joined ({count}/{MaxPlayers}).");
             UpdateConnectionState(runner);
             if (_connectionState != null)
-                _connectionState.PlayerCount = runner.ActivePlayers.Count();
+                _connectionState.PlayerCount = count;
 
             if (runner.IsServer)
             {
@@ -212,9 +243,11 @@ namespace PhotonKarts.Networking
 
         public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
         {
+            int count = runner.ActivePlayers.Count();
             Debug.Log($"[{ModeLabel()}] Player {player} left.");
+            _connectionState?.PushLog($"Player {player} left ({count}/{MaxPlayers}).");
             if (_connectionState != null)
-                _connectionState.PlayerCount = runner.ActivePlayers.Count();
+                _connectionState.PlayerCount = count;
 
             if (runner.IsServer)
             {
@@ -238,18 +271,21 @@ namespace PhotonKarts.Networking
         public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
         {
             Debug.Log($"[{ModeLabel()}] Runner shutdown: {shutdownReason}");
+            _connectionState?.PushLog($"Shutdown: {shutdownReason}");
             SetStatus(ConnectionStatus.Disconnected);
         }
 
         public void OnConnectedToServer(NetworkRunner runner)
         {
             Debug.Log($"[Client] Connected to server.");
+            _connectionState?.PushLog("Connected to server.");
             UpdateConnectionState(runner);
         }
 
         public void OnDisconnectedFromServer(NetworkRunner runner, NetDisconnectReason reason)
         {
             Debug.LogWarning($"[Client] Disconnected from server: {reason}");
+            _connectionState?.PushLog($"Disconnected: {reason}");
             SetStatus(ConnectionStatus.Disconnected);
         }
 
