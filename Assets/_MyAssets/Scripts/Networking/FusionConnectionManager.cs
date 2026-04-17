@@ -21,7 +21,7 @@ namespace PhotonKarts.Networking
     /// Also handles:
     ///   - Forwarding local player input to Fusion each tick (OnInput)
     ///   - Delegating player join/leave to KartSpawnManager (server only)
-    ///   - Host migration when the dedicated server goes down
+    ///   - Host migration when the host client drops (AutoHostOrClient mode only)
     /// </summary>
     public class FusionConnectionManager : MonoBehaviour, INetworkRunnerCallbacks
     {
@@ -38,13 +38,17 @@ namespace PhotonKarts.Networking
         [SerializeField] private ConnectionStateSO _connectionState;
 
         // ── Constants ────────────────────────────────────────────────────────────
-        private const string SessionName    = "DefaultRace";
+        private const string SessionName    = "1234";
         private const int    MaxPlayers     = 3;
         private const int    RetryCount     = 10;
         private const float  RetryDelaySec  = 2f;
 
         // ── Runtime ──────────────────────────────────────────────────────────────
         private NetworkRunner _runner;
+
+        // Unique per process lifetime — different each Editor Play session so two Editor
+        // instances never share a token. Stable within a session so migration re-associates correctly.
+        private static readonly byte[] _connectionToken = Guid.NewGuid().ToByteArray();
 
         /// <summary>True when running as the authoritative server (dedicated or migrated host).</summary>
         public bool IsServer => _runner != null && _runner.IsServer;
@@ -53,8 +57,18 @@ namespace PhotonKarts.Networking
 
         private void Start()
         {
+            // Auto-find SO if not wired in Inspector
+            if (_connectionState == null)
+                _connectionState = Resources.FindObjectsOfTypeAll<ConnectionStateSO>().Length > 0
+                    ? Resources.FindObjectsOfTypeAll<ConnectionStateSO>()[0]
+                    : null;
+
             _connectionState?.Reset();
-            SetStatus(ConnectionStatus.Connecting);
+            if (_connectionState != null)
+            {
+                _connectionState.MaxPlayers = MaxPlayers;
+                SetStatus(ConnectionStatus.Connecting);
+            }
 
 #if UNITY_SERVER
             _connectionState?.PushLog("Starting dedicated server...");
@@ -105,6 +119,7 @@ namespace PhotonKarts.Networking
                 bool isHost = _runner.IsServer;
                 _connectionState?.PushLog(isHost ? "Started as HOST." : "Joined as CLIENT.");
                 Debug.Log("[Client] Started as AutoHostOrClient.");
+
             }
             else
             {
@@ -169,7 +184,12 @@ namespace PhotonKarts.Networking
         public void OnHostMigration(NetworkRunner runner, HostMigrationToken hostMigrationToken)
         {
             Debug.Log("[Client] OnHostMigration received — restarting as Host.");
-            _connectionState?.PushLog("Host left — migrating to host...");
+            _connectionState?.PushLog("Host left — saving positions & migrating...");
+
+            // Capture positions NOW while NetworkRigidbody3D is still alive.
+            var spawnManager = FindFirstObjectByType<KartSpawnManager>();
+            spawnManager?.SaveMigrationPositions();
+
             StartCoroutine(MigrateToHost(hostMigrationToken));
         }
 
@@ -179,10 +199,13 @@ namespace PhotonKarts.Networking
             _runner = null;
 
             oldRunner.Shutdown();
-            yield return new WaitUntil(() => !oldRunner.IsRunning);
-            Destroy(oldRunner.gameObject);
+            // Fusion may destroy the runner GO internally — guard both cases.
+            yield return new WaitUntil(() => oldRunner == null || !oldRunner.IsRunning);
 
-            _connectionState?.PushLog("Old runner destroyed — spawning new runner...");
+            if (oldRunner != null)
+                Destroy(oldRunner.gameObject);
+
+            _connectionState?.PushLog("Old runner gone — starting as new host...");
 
             _runner = Instantiate(_runnerPrefab);
             _runner.AddCallbacks(this);
@@ -192,8 +215,8 @@ namespace PhotonKarts.Networking
 
         private async void StartAsHost(HostMigrationToken token)
         {
-            _connectionState?.PushLog("Restarting as new host...");
-            var args = BuildStartArgs(FusionGameMode.Host);
+            _connectionState?.PushLog("Restarting — negotiating new host...");
+            var args = BuildStartArgs(FusionGameMode.AutoHostOrClient);
             args.HostMigrationToken  = token;
             args.HostMigrationResume = OnHostMigrationResume;
 
@@ -201,8 +224,9 @@ namespace PhotonKarts.Networking
 
             if (result.Ok)
             {
-                _connectionState?.PushLog("Now HOST — session restored.");
-                Debug.Log("[Client] Now running as Host. Session restored.");
+                bool isNewHost = _runner.IsServer;
+                _connectionState?.PushLog(isNewHost ? "Now HOST — session restored." : "Rejoined as CLIENT after migration.");
+                Debug.Log($"[Client] Migration complete. IsHost={isNewHost}");
             }
             else
             {
@@ -218,9 +242,13 @@ namespace PhotonKarts.Networking
         private void OnHostMigrationResume(NetworkRunner runner)
         {
             Debug.Log("[Client] Race resumed after host migration.");
+            _connectionState?.PushLog("Migration complete — re-associating karts...");
+            UpdateConnectionState(runner);
 
             var spawnManager = FindFirstObjectByType<KartSpawnManager>();
             spawnManager?.OnHostMigrationResume(runner);
+
+            _connectionState?.PushLog($"Session restored. Players: {runner.ActivePlayers.Count()}");
         }
 
         // ── INetworkRunnerCallbacks ───────────────────────────────────────────────
@@ -295,7 +323,11 @@ namespace PhotonKarts.Networking
         public void OnObjectEnterAOI(NetworkRunner runner, NetworkObject obj, PlayerRef player) { }
         public void OnInputMissing(NetworkRunner runner, PlayerRef player, NetworkInput input) { }
         public void OnConnectRequest(NetworkRunner runner, NetworkRunnerCallbackArgs.ConnectRequest request, byte[] token) { }
-        public void OnConnectFailed(NetworkRunner runner, NetAddress remoteAddress, NetConnectFailedReason reason) { }
+        public void OnConnectFailed(NetworkRunner runner, NetAddress remoteAddress, NetConnectFailedReason reason)
+        {
+            _connectionState?.PushLog($"Connect failed: {reason}");
+            SetStatus(ConnectionStatus.Failed);
+        }
         public void OnUserSimulationMessage(NetworkRunner runner, SimulationMessagePtr message) { }
         public void OnSessionListUpdated(NetworkRunner runner, List<SessionInfo> sessionList) { }
         public void OnCustomAuthenticationResponse(NetworkRunner runner, Dictionary<string, object> data) { }
@@ -310,13 +342,14 @@ namespace PhotonKarts.Networking
         {
             return new StartGameArgs
             {
-                GameMode    = mode,
-                SessionName = SessionName,
-                PlayerCount = MaxPlayers,
-                IsVisible   = false,   // not listed in public matchmaking
-                IsOpen      = true,
-                Scene       = SceneRef.FromIndex(SceneManager.GetActiveScene().buildIndex),
-                SceneManager = _runner.GetComponent<NetworkSceneManagerDefault>(),
+                GameMode        = mode,
+                SessionName     = SessionName,
+                PlayerCount     = MaxPlayers,
+                IsVisible       = false,   // not listed in public matchmaking
+                IsOpen          = true,
+                Scene           = SceneRef.FromIndex(SceneManager.GetActiveScene().buildIndex),
+                SceneManager    = _runner.GetComponent<NetworkSceneManagerDefault>(),
+                ConnectionToken = _connectionToken,
             };
         }
 
