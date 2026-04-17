@@ -29,49 +29,67 @@ namespace PhotonKarts.Editor
             scaler.matchWidthOrHeight  = 0.5f;
             canvasGO.AddComponent<GraphicRaycaster>();
 
-            // Panel (top-left anchor)
-            var panelGO        = new GameObject("Panel");
+            // Panel (top-left anchor, auto-height)
+            var panelGO  = new GameObject("Panel");
             panelGO.transform.SetParent(canvasGO.transform, false);
-            var panelRect      = panelGO.AddComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(0, 1);
-            panelRect.anchorMax = new Vector2(0, 1);
-            panelRect.pivot     = new Vector2(0, 1);
+            var panelRect = panelGO.AddComponent<RectTransform>();
+            panelRect.anchorMin        = new Vector2(0, 1);
+            panelRect.anchorMax        = new Vector2(0, 1);
+            panelRect.pivot            = new Vector2(0, 1);
             panelRect.anchoredPosition = new Vector2(10, -10);
-            panelRect.sizeDelta        = new Vector2(320, 320);
+            panelRect.sizeDelta        = new Vector2(340, 0);   // width fixed, height driven by content
 
             var bg = panelGO.AddComponent<Image>();
-            bg.color = new Color(0, 0, 0, 0.55f);
+            bg.color = new Color(0, 0, 0, 0.6f);
 
-            // Text
+            var layout = panelGO.AddComponent<VerticalLayoutGroup>();
+            layout.padding          = new RectOffset(10, 10, 8, 8);
+            layout.childForceExpandWidth  = true;
+            layout.childForceExpandHeight = false;
+            layout.childControlWidth      = true;
+            layout.childControlHeight     = true;
+
+            var fitter = panelGO.AddComponent<ContentSizeFitter>();
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // Text (single child drives the panel height)
             var textGO   = new GameObject("Text");
             textGO.transform.SetParent(panelGO.transform, false);
-            var textRect = textGO.AddComponent<RectTransform>();
-            textRect.anchorMin        = Vector2.zero;
-            textRect.anchorMax        = Vector2.one;
-            textRect.offsetMin        = new Vector2(8, 8);
-            textRect.offsetMax        = new Vector2(-8, -8);
+            textGO.AddComponent<RectTransform>();
 
-            var tmp              = textGO.AddComponent<TextMeshProUGUI>();
-            tmp.fontSize         = 14;
-            tmp.color            = Color.white;
-            tmp.alignment        = TextAlignmentOptions.TopLeft;
-            tmp.overflowMode     = TextOverflowModes.Overflow;
+            var tmp = textGO.AddComponent<TextMeshProUGUI>();
+            tmp.fontSize           = 13;
+            tmp.color              = Color.white;
+            tmp.alignment          = TextAlignmentOptions.TopLeft;
             tmp.enableWordWrapping = false;
-            tmp.text             = "Connecting...";
+            tmp.text               = "Connecting...";
 
             // HUD component
             var hud = canvasGO.AddComponent<ConnectionHUD>();
-            var so  = typeof(ConnectionHUD).GetField("_state",
+            var soField = typeof(ConnectionHUD).GetField("_state",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var tx  = typeof(ConnectionHUD).GetField("_text",
+            var txField = typeof(ConnectionHUD).GetField("_text",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            so?.SetValue(hud, stateSO);
-            tx?.SetValue(hud, tmp);
+            soField?.SetValue(hud, stateSO);
+            txField?.SetValue(hud, tmp);
+
+            // Auto-wire SO to FusionConnectionManager if it's in the scene
+            var fcm = Object.FindFirstObjectByType<FusionConnectionManager>();
+            if (fcm != null)
+            {
+                var fcmField = typeof(FusionConnectionManager).GetField("_connectionState",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                fcmField?.SetValue(fcm, stateSO);
+                EditorUtility.SetDirty(fcm);
+                Debug.Log("[ConnectionHUDBuilder] Auto-wired ConnectionStateSO to FusionConnectionManager.");
+            }
+            else
+            {
+                Debug.LogWarning("[ConnectionHUDBuilder] FusionConnectionManager not found in scene — wire ConnectionStateSO manually.");
+            }
 
             Undo.RegisterCreatedObjectUndo(canvasGO, "Create Connection HUD");
             Selection.activeGameObject = canvasGO;
-
-            Debug.Log("[ConnectionHUDBuilder] HUD created. Wire ConnectionStateSO to FusionConnectionManager if not already done.");
         }
 
         private static ConnectionStateSO FindOrPromptStateSO()
